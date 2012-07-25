@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 #
 # Copyright 2011 Eytan Daniyalzade
+# Modified 2012 Michael Will 
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -69,40 +70,58 @@ def _get_ganglia_metrics(hostname, port, file_):
     else:
         return netcat(hostname, port, '')
 
-def _get_error_code(ganglia_metrics, hostname, metric, warning, critical):
+def _get_error_code(ganglia_metrics, hostname, metric_sre, warning, critical, inverted):
     """
     Extracts the value for metric on hostname from ganglia_metrics by regex,
-    and returns an error code based on the warning/critical thresholds
-    passed in.
+    and returns an error code based on the warning/critical thresholds, assuming higher is better than lower
+    i.e. for disk_free_percent_rootfs 
 
     @params ganglia_metrics: str
     @params hostname: str
-    @params metric: str
+    @params metric_sre: str 
     @params warning: float
     @params critical: float
+    @params inverted: 
     @return error_code: int
     """
 
     lines = ganglia_metrics.split('\n')
+    metric_re = re.compile(metric_sre)
+    metric=0;
     for i, line in enumerate(lines):
         if hostname in line:
             for j in range(i, len(lines)):
-                if metric in lines[j]:
+                if metric_re.search(lines[j]):
+#		    print "mw: %s" % lines[j]
                     m = re.search(VALUE_PARSING_RE, lines[j])
                     val = float(m.group(1))
-                    if (not critical is None) and val > critical:
-                        print ("ERROR - hostname %s, metric %s, val %s, critical %s" %
-                               (hostname, metric, val, critical,))
-                        return(2)
-                    if (not warning is None) and val > warning:
-                        print ("WARNING - hostname %s, metric %s, val %s, warning %s" %
-                               (hostname, metric, val, warning,))
-                        return(1)
-                    print ("OK - hostname %s, metric %s, val %s, warning %s" %
-                           (hostname, metric, val, warning,))
-                    return(0)
+		    metric+=val
+                elif "</HOST>" in lines[j]:
+		    if inverted:
+			    if (not critical is None) and metric < critical:
+				print ("ERROR - hostname %s, metric %s, val %s, critical %s" %
+				       (hostname, metric_sre, metric, critical,))
+				return(2)
+			    if (not warning is None) and metric < warning:
+				print ("WARNING - hostname %s, metric %s, val %s, warning %s" %
+				       (hostname, metric_sre, metric, warning,))
+				return(1)
+		    else:
+			    if (not critical is None) and metric > critical:
+				print ("ERROR - hostname %s, metric %s, val %s, critical %s" %
+				       (hostname, metric_sre, metric, critical,))
+				return(2)
+			    if (not warning is None) and metric > warning:
+				print ("WARNING - hostname %s, metric %s, val %s, warning %s" %
+				       (hostname, metric_sre, metric, warning,))
+				return(1)
+
+		    print ("OK - hostname %s, metric %s, val %s, warning %s" %
+			   (hostname, metric_sre, metric, warning,))
+		    return(0)
+
     print ("WARNING - no value for hostname %s, metric %s" %
-            (hostname, metric))
+            (hostname, metric_sre))
     return(1)
 
 def main():
@@ -130,6 +149,10 @@ def main():
     p.add_option('-C', '--critical', type=float, default=None,
                     help="critical value",
                     )
+    #p.add_option('-I', '--invert', type=int, default=None,
+    p.add_option('-I', '--invert',  action="store_true", dest="invert", default=False,
+                    help="check to stay above instead of below critical value",
+                    )
 
     options, arguments = p.parse_args()
     if not options.critical and not options.warning:
@@ -140,9 +163,10 @@ def main():
                                     options.file,
                                     )
     error_code = _get_error_code(metrics, options.hostname, options.metric,
-                                 options.warning,
-                                 options.critical,
-                                 )
+				 options.warning,
+				 options.critical,
+				 options.invert
+				 )
     return error_code
 
 if __name__ == '__main__':
